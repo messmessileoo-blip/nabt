@@ -1,0 +1,487 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:digl/services/user_role_service.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../data/models/ai_chat_message.dart';
+import '../../data/models/medical_intake.dart';
+import '../../data/repositories/medical_ai_repository.dart';
+import '../../data/services/medical_ai_api_service.dart';
+import '../providers/medical_ai_chat_provider.dart';
+
+class MedicalAiChatScreen extends StatefulWidget {
+  const MedicalAiChatScreen({super.key});
+
+  @override
+  State<MedicalAiChatScreen> createState() => _MedicalAiChatScreenState();
+}
+
+class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
+  static const String _savedIntakeKey = 'medical_ai_saved_intake';
+
+  final _formKey = GlobalKey<FormState>();
+  final _problem = TextEditingController();
+  final _started = TextEditingController();
+  final _age = TextEditingController();
+  final _duration = TextEditingController();
+  final _message = TextEditingController();
+  final _scrollController = ScrollController();
+  final _messageFocus = FocusNode();
+
+  String _gender = 'ذكر';
+  String _severity = 'متوسطة';
+  MedicalIntake? _intake;
+  bool _isLoadingSavedIntake = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedIntake();
+  }
+
+  @override
+  void dispose() {
+    _problem.dispose();
+    _started.dispose();
+    _age.dispose();
+    _duration.dispose();
+    _message.dispose();
+    _scrollController.dispose();
+    _messageFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSavedIntake() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_savedIntakeKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final intake = MedicalIntake.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+        if (intake.problem.trim().isNotEmpty && mounted) {
+          setState(() => _intake = intake);
+        }
+      } catch (_) {
+        await prefs.remove(_savedIntakeKey);
+      }
+    }
+    if (mounted) setState(() => _isLoadingSavedIntake = false);
+  }
+
+  Future<void> _saveIntake(MedicalIntake intake) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_savedIntakeKey, jsonEncode(intake.toMap()));
+  }
+
+  Future<void> _startNewChat(BuildContext providerContext) async {
+    await providerContext.read<MedicalAiChatProvider>().clearMessages();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_savedIntakeKey);
+    if (!mounted) return;
+    _problem.clear();
+    _started.clear();
+    _age.clear();
+    _duration.clear();
+    _message.clear();
+    setState(() => _intake = null);
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  Future<void> _sendMessage(MedicalAiChatProvider provider) async {
+    final intake = _intake;
+    final text = _message.text.trim();
+    if (intake == null || text.isEmpty || provider.isLoading) return;
+    _message.clear();
+    _scrollToBottom();
+    await provider.send(intake, text);
+    _scrollToBottom();
+    _messageFocus.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => MedicalAiChatProvider(
+        MedicalAiRepository(apiService: MedicalAiApiService()),
+      )..loadLocalHistory(),
+      child: FutureBuilder<bool>(
+        future: UserRoleService.isPatient(),
+        builder: (context, roleSnapshot) {
+          if (roleSnapshot.connectionState == ConnectionState.waiting || _isLoadingSavedIntake) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          if (roleSnapshot.data != true) {
+            return Scaffold(
+              appBar: AppBar(title: const Text('مساعد نبض AI')),
+              body: const SafeArea(
+                child: Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('المساعد الذكي متاح لحسابات المرضى فقط.', textAlign: TextAlign.center),
+                  ),
+                ),
+              ),
+            );
+          }
+          return Consumer<MedicalAiChatProvider>(
+            builder: (context, provider, _) => Scaffold(
+              resizeToAvoidBottomInset: true,
+              appBar: AppBar(
+                leading: IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                title: const Text('مساعد نبض AI'),
+                actions: [
+                  IconButton(
+                    tooltip: 'مسح المحادثة',
+                    onPressed: provider.messages.isEmpty && _intake == null ? null : () => _startNewChat(context),
+                    icon: const Icon(Icons.delete_sweep_rounded),
+                  ),
+                ],
+              ),
+              body: SafeArea(child: _intake == null ? _buildIntake(context, provider) : _buildChat(context, provider)),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildIntake(BuildContext context, MedicalAiChatProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Form(
+      key: _formKey,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Icon(Icons.auto_awesome_rounded, size: 48, color: colorScheme.primary),
+          const SizedBox(height: 12),
+          Text('لنبدأ بسياق طبي مختصر', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 20),
+          TextFormField(controller: _problem, decoration: const InputDecoration(labelText: 'ما المشكلة أو الأعراض؟', prefixIcon: Icon(Icons.sick_outlined)), validator: _required),
+          const SizedBox(height: 12),
+          TextFormField(controller: _started, decoration: const InputDecoration(labelText: 'متى بدأت؟', prefixIcon: Icon(Icons.schedule_rounded)), validator: _required),
+          const SizedBox(height: 12),
+          TextFormField(controller: _age, decoration: const InputDecoration(labelText: 'العمر', prefixIcon: Icon(Icons.cake_outlined)), keyboardType: TextInputType.number, validator: (v) { final n = int.tryParse(v ?? ''); return n == null || n <= 0 ? 'أدخل عمر صحيح' : null; }),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(value: _gender, decoration: const InputDecoration(labelText: 'الجنس', prefixIcon: Icon(Icons.wc_rounded)), items: ['ذكر', 'أنثى'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _gender = v!)),
+          const SizedBox(height: 12),
+          TextFormField(controller: _duration, decoration: const InputDecoration(labelText: 'مدة الأعراض', prefixIcon: Icon(Icons.timelapse_rounded)), validator: _required),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(value: _severity, decoration: const InputDecoration(labelText: 'شدة الحالة', prefixIcon: Icon(Icons.monitor_heart_outlined)), items: ['خفيفة', 'متوسطة', 'شديدة', 'طارئة'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _severity = v!)),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: provider.isLoading ? null : () async {
+              if (!_formKey.currentState!.validate()) return;
+              final intake = MedicalIntake(problem: _problem.text.trim(), symptomStart: _started.text.trim(), age: int.parse(_age.text.trim()), gender: _gender, duration: _duration.text.trim(), severity: _severity);
+              await provider.clearMessages();
+              await _saveIntake(intake);
+              if (!mounted) return;
+              setState(() => _intake = intake);
+              await provider.buildInitialRecommendation(intake);
+              _scrollToBottom();
+            },
+            icon: provider.isLoading ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.auto_awesome),
+            label: const Text('ابدأ المحادثة'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChat(BuildContext context, MedicalAiChatProvider provider) {
+    final colorScheme = Theme.of(context).colorScheme;
+    _scrollToBottom();
+    final itemCount = provider.messages.length + (provider.isLoading ? 1 : 0);
+    return Column(
+      children: [
+        if (provider.error != null)
+          MaterialBanner(
+            content: Text(provider.error!),
+            actions: [TextButton(onPressed: provider.clearError, child: const Text('حسناً'))],
+          ),
+        Expanded(
+          child: provider.messages.isEmpty && !provider.isLoading
+              ? _EmptyChat(colorScheme: colorScheme)
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(14, 16, 14, 12),
+                  itemCount: itemCount,
+                  itemBuilder: (context, i) {
+                    if (i == provider.messages.length) return const _TypingIndicator();
+                    return _MessageBubble(message: provider.messages[i]);
+                  },
+                ),
+        ),
+        _Composer(
+          controller: _message,
+          focusNode: _messageFocus,
+          isLoading: provider.isLoading,
+          onSend: () => _sendMessage(provider),
+          onImage: () async {
+            final intake = _intake;
+            if (intake == null || provider.isLoading) return;
+            final x = await ImagePicker().pickImage(source: ImageSource.gallery);
+            if (x != null) {
+              await provider.sendAttachment(intake, x.path, 'image');
+              _scrollToBottom();
+            }
+          },
+          onFile: () async {
+            final intake = _intake;
+            if (intake == null || provider.isLoading) return;
+            final f = await FilePicker.platform.pickFiles();
+            final path = f?.files.single.path;
+            if (path != null) {
+              final lowerPath = path.toLowerCase();
+              final isImage = lowerPath.endsWith('.jpg') ||
+                  lowerPath.endsWith('.jpeg') ||
+                  lowerPath.endsWith('.png') ||
+                  lowerPath.endsWith('.webp') ||
+                  lowerPath.endsWith('.heic') ||
+                  lowerPath.endsWith('.heif');
+              await provider.sendAttachment(intake, path, isImage ? 'image' : 'file');
+              _scrollToBottom();
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  String? _required(String? v) => v == null || v.trim().isEmpty ? 'هذا الحقل مطلوب' : null;
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({required this.message});
+
+  final AiChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isUser = message.isUser;
+    final background = isUser ? colorScheme.primary : colorScheme.surface;
+    final foreground = isUser ? colorScheme.onPrimary : colorScheme.onSurface;
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(offset: Offset(0, (1 - value) * 12), child: child),
+      ),
+      child: Align(
+        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .82),
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadiusDirectional.only(
+              topStart: const Radius.circular(22),
+              topEnd: const Radius.circular(22),
+              bottomStart: Radius.circular(isUser ? 22 : 6),
+              bottomEnd: Radius.circular(isUser ? 6 : 22),
+            ),
+            boxShadow: [
+              BoxShadow(color: colorScheme.shadow.withOpacity( .08), blurRadius: 14, offset: const Offset(0, 8)),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (message.attachmentType == 'image' && message.attachmentPath != null) ...[
+                ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.file(File(message.attachmentPath!), height: 160, fit: BoxFit.cover)),
+                const SizedBox(height: 10),
+              ],
+              SelectableText(message.content, style: TextStyle(color: foreground, height: 1.45, fontSize: 15.5)),
+              const SizedBox(height: 6),
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'نسخ الرسالة',
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: message.content));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ الرسالة')));
+                    }
+                  },
+                  icon: Icon(Icons.copy_rounded, size: 16, color: foreground.withOpacity( .76)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator();
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(color: colorScheme.surface, borderRadius: BorderRadius.circular(22)),
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(3, (index) {
+              final phase = (_controller.value + index * .18) % 1;
+              final scale = .65 + (math.sin(phase * math.pi) * .35);
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: Transform.scale(
+                  scale: scale,
+                  child: CircleAvatar(radius: 4, backgroundColor: colorScheme.primary.withOpacity( .85)),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyChat extends StatelessWidget {
+  const _EmptyChat({required this.colorScheme});
+
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: colorScheme.primaryContainer),
+              child: Icon(Icons.health_and_safety_rounded, size: 54, color: colorScheme.onPrimaryContainer),
+            ),
+            const SizedBox(height: 18),
+            Text('اسأل مساعد نبض الطبي', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 8),
+            Text('اكتب سؤالك الصحي وسأجيبك بإرشادات آمنة ومنظمة، مع التنبيه عند الحاجة لمراجعة الطبيب أو الطوارئ.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant, height: 1.5)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Composer extends StatelessWidget {
+  const _Composer({
+    required this.controller,
+    required this.focusNode,
+    required this.isLoading,
+    required this.onSend,
+    required this.onImage,
+    required this.onFile,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool isLoading;
+  final VoidCallback onSend;
+  final VoidCallback onImage;
+  final VoidCallback onFile;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          border: Border(top: BorderSide(color: colorScheme.outlineVariant.withOpacity(.55))),
+        ),
+        child: Row(
+          children: [
+            IconButton(tooltip: 'رفع صورة', onPressed: isLoading ? null : onImage, icon: const Icon(Icons.image_outlined)),
+            IconButton(tooltip: 'رفع ملف', onPressed: isLoading ? null : onFile, icon: const Icon(Icons.attach_file_rounded)),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                minLines: 1,
+                maxLines: 5,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => onSend(),
+                decoration: InputDecoration(
+                  hintText: 'اكتب سؤالك...',
+                  filled: true,
+                  fillColor: colorScheme.surface,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: controller,
+              builder: (context, value, _) => IconButton.filled(
+                tooltip: 'إرسال',
+                onPressed: isLoading || value.text.trim().isEmpty ? null : onSend,
+                icon: const Icon(Icons.send_rounded),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
