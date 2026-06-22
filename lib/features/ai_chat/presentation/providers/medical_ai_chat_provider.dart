@@ -1,3 +1,4 @@
+import 'package:digl/features/ai_chat/data/services/medical_ai_error_handler.dart';
 import 'package:digl/features/ai_chat/presentation/pages/medical_ai_chat_screen.dart';
 import 'package:flutter/material.dart';
 import '../../data/models/ai_chat_message.dart';
@@ -44,7 +45,7 @@ class MedicalAiChatProvider extends ChangeNotifier {
       await _addBot(recommendation);
       return recommendation;
     } catch (e) {
-      error = 'تعذر إنشاء التوصية: $e';
+      error = MedicalAiErrorHandler.friendlyMessage(e);
       return error!;
     } finally {
       isLoading = false;
@@ -62,17 +63,18 @@ class MedicalAiChatProvider extends ChangeNotifier {
       final reply = await repository.sendMessage(intake, messages, content.trim());
       await _addBot(reply);
     } catch (e) {
-      error = 'حدث خطأ أثناء الاتصال بخدمة الذكاء الاصطناعي: $e';
+      error = MedicalAiErrorHandler.friendlyMessage(e);
     } finally {
       isLoading = false;
       notifyListeners();
     }
   }
 
-  Future<void> sendAttachment(MedicalIntake intake, String path, String type) async {
+  Future<void> sendAttachment(MedicalIntake intake, String path, String type, {String? description}) async {
+    final cleanDescription = description?.trim() ?? '';
     final label = type == 'image'
-        ? 'تم رفع صورة للتحليل. افحص الصورة نفسها: إن كانت فحصاً أو تحليلاً فاستخرج النصوص والقيم المقروءة واشرحها، وإن كانت دواءً فحدد الاسم الظاهر أو الأقرب والاستخدام والتحذيرات العامة.'
-        : 'تم رفع ملف للمراجعة';
+        ? 'تم رفع صورة للتحليل.${cleanDescription.isEmpty ? '' : '\nوصف المستخدم للصورة: $cleanDescription'}\nافحص الصورة نفسها: إن كانت فحصاً أو تحليلاً فاستخرج النصوص والقيم المقروءة واشرحها، وإن كانت دواءً فحدد الاسم الظاهر أو الأقرب والاستخدام والتحذيرات العامة.'
+        : 'تم رفع ملف للمراجعة${cleanDescription.isEmpty ? '' : ': $cleanDescription'}';
     await _add(AiChatMessage(id: DateTime.now().microsecondsSinceEpoch.toString(), content: label, isUser: true, createdAt: DateTime.now(), attachmentPath: path, attachmentType: type));
     isLoading = true; error = null; notifyListeners();
     try {
@@ -84,7 +86,7 @@ class MedicalAiChatProvider extends ChangeNotifier {
         attachmentType: type,
       );
       await _addBot(reply.isEmpty ? 'تم استلام المرفق. صف لي ما تريد تحليله بالتحديد.' : reply);
-    } catch (e) { error = 'تعذر تحليل المرفق: $e'; }
+    } catch (e) { error = MedicalAiErrorHandler.friendlyMessage(e); }
     finally { isLoading = false; notifyListeners(); }
   }
 
@@ -107,6 +109,17 @@ class MedicalAiChatProvider extends ChangeNotifier {
       icon: const Icon(Icons.smart_toy_rounded),
       label: const Text('مساعدك الشخصي'),
     );
+  }
+
+  Future<void> deleteMessage(AiChatMessage message) async {
+    messages.removeWhere((item) => item.id == message.id);
+    notifyListeners();
+    await repository.deleteMessage(message);
+  }
+
+  Future<void> resend(MedicalIntake intake, AiChatMessage message) async {
+    if (!message.isUser || message.content.trim().isEmpty || isLoading) return;
+    await send(intake, message.content);
   }
 
   Future<void> _addUser(String content) async => _add(AiChatMessage(id: DateTime.now().microsecondsSinceEpoch.toString(), content: content, isUser: true, createdAt: DateTime.now()));
