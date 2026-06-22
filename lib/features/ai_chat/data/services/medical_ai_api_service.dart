@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 
 import '../models/ai_chat_message.dart';
 import '../models/medical_intake.dart';
+import 'medical_ai_error_handler.dart';
 
 class MedicalAiApiService {
   static const String _geminiApiKey =
@@ -73,7 +74,7 @@ class MedicalAiApiService {
 
     if (useOpenRouter) {
       if (openRouterKey.isEmpty) {
-        return 'لم يتم ضبط مفتاح OpenRouter. شغّل التطبيق باستخدام --dart-define=AI_PROVIDER=openrouter --dart-define=OPENROUTER_API_KEY=YOUR_KEY.';
+        return 'الخدمة غير متاحة حالياً، يرجى المحاولة مرة أخرى لاحقاً.';
       }
       return _sendToOpenRouter(
         key: openRouterKey,
@@ -86,7 +87,7 @@ class MedicalAiApiService {
     }
 
     if (key.isEmpty) {
-      return 'لم يتم ضبط مفتاح Gemini. أنشئ مفتاحاً من Google AI Studio ثم شغّل التطبيق باستخدام: flutter run --dart-define=GEMINI_API_KEY=YOUR_KEY. لا تحفظ المفتاح داخل Git أو Firebase options.';
+      return 'الخدمة غير متاحة حالياً، يرجى المحاولة مرة أخرى لاحقاً.';
     }
 
     final geminiUrl =
@@ -137,17 +138,17 @@ class MedicalAiApiService {
 
       final reply = _extractGeminiReply(response.data);
       if (reply.isEmpty) {
-        return 'وصل الطلب إلى Gemini لكن لم يصل رد نصي مفهوم. رد Google: ${response.data}';
+        return 'يرجى توضيح سؤالك بشكل أكبر حتى أتمكن من مساعدتك.';
       }
       return reply;
     } on DioException catch (e) {
       return _formatDioError(e, serviceName: 'Gemini');
     } on SocketException catch (e) {
       _debug('Gemini SocketException: $e');
-      return 'تعذر الاتصال بالإنترنت أو بخوادم Gemini: ${e.message}';
+      return MedicalAiErrorHandler.friendlyMessage(e);
     } catch (e) {
       _debug('Gemini Unknown Error: $e');
-      return 'حدث خطأ غير متوقع أثناء الاتصال بـ Gemini: $e';
+      return MedicalAiErrorHandler.friendlyMessage(e);
     }
   }
 
@@ -192,7 +193,7 @@ class MedicalAiApiService {
       return _formatDioError(e, serviceName: 'الخادم الطبي المخصص');
     } on SocketException catch (e) {
       _debug('Medical AI Backend SocketException: $e');
-      return 'تعذر الاتصال بالإنترنت أو بالخادم الطبي المخصص: ${e.message}';
+      return MedicalAiErrorHandler.friendlyMessage(e);
     }
   }
 
@@ -243,17 +244,17 @@ class MedicalAiApiService {
 
       final reply = _extractOpenRouterReply(response.data);
       if (reply.isEmpty) {
-        return 'وصل الطلب إلى OpenRouter لكن لم يصل رد نصي مفهوم. رد الخدمة: ${response.data}';
+        return 'يرجى توضيح سؤالك بشكل أكبر حتى أتمكن من مساعدتك.';
       }
       return reply;
     } on DioException catch (e) {
       return _formatDioError(e, serviceName: 'OpenRouter');
     } on SocketException catch (e) {
       _debug('OpenRouter SocketException: $e');
-      return 'تعذر الاتصال بالإنترنت أو بخوادم OpenRouter: ${e.message}';
+      return MedicalAiErrorHandler.friendlyMessage(e);
     } catch (e) {
       _debug('OpenRouter Unknown Error: $e');
-      return 'حدث خطأ غير متوقع أثناء الاتصال بـ OpenRouter: $e';
+      return MedicalAiErrorHandler.friendlyMessage(e);
     }
   }
 
@@ -346,7 +347,6 @@ class MedicalAiApiService {
   String _formatDioError(DioException e, {required String serviceName}) {
     final statusCode = e.response?.statusCode;
     final responseBody = e.response?.data;
-    final googleMessage = _extractApiErrorMessage(responseBody);
     final requestUrl = e.requestOptions.uri.toString();
 
     _debug('$serviceName Request URL: $requestUrl');
@@ -355,27 +355,7 @@ class MedicalAiApiService {
     _debug('$serviceName Error Response: $responseBody');
     _debug('$serviceName Error Message: ${e.message}');
 
-    if (statusCode == 401 || statusCode == 403) {
-      return _formatAuthenticationError(
-        statusCode: statusCode,
-        googleMessage: googleMessage,
-        fallbackMessage: e.message,
-      );
-    }
-    if (statusCode == 404) {
-      return 'رابط أو نموذج Gemini غير موجود برمز 404. السبب الفعلي: ${googleMessage.isNotEmpty ? googleMessage : e.message}. النموذج الحالي: $model.';
-    }
-    if (statusCode == 429) {
-      return 'تم تجاوز حد طلبات Gemini برمز 429. السبب الفعلي: ${googleMessage.isNotEmpty ? googleMessage : e.message}.';
-    }
-    if (statusCode != null && statusCode >= 500) {
-      return 'خطأ من خوادم $serviceName برمز $statusCode. السبب الفعلي: ${googleMessage.isNotEmpty ? googleMessage : e.message}.';
-    }
-    if (statusCode == 400) {
-      return 'رفضت Google تنسيق طلب Gemini برمز 400. السبب الفعلي: ${googleMessage.isNotEmpty ? googleMessage : e.message}.';
-    }
-
-    return 'تعذر الاتصال بـ $serviceName. السبب الفعلي: ${googleMessage.isNotEmpty ? googleMessage : e.message ?? e.type.name}.';
+    return MedicalAiErrorHandler.friendlyMessage(e);
   }
 
   String _formatAuthenticationError({
