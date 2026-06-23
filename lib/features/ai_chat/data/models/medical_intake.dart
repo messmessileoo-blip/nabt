@@ -32,12 +32,14 @@ class MedicalIntake {
 
   List<String> get symptoms => problem.split(RegExp(r'[،,\s]+')).where((e) => e.trim().isNotEmpty).toList();
 
-  String toPrompt() => '''
+  String toPrompt() {
+    final durationLine = duration.trim().isEmpty ? '' : 'المدة: $duration\n';
+    return '''
 المرض أو المشكلة: $problem
 بداية الأعراض: $symptomStart
 عمر المريض: $age
 الجنس: $gender
-المدة: $duration
-شدة الحالة: $severity
+$durationLineشدة الحالة: $severity
 ''';
+  }
 }

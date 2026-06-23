@@ -67,6 +67,23 @@ class MedicalAiRepository {
     await batch.commit();
   }
 
+  Future<void> deleteMessage(AiChatMessage message) async {
+    final uid = auth.currentUser?.uid;
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getStringList(_historyKey) ?? <String>[];
+    final filtered = current.where((raw) {
+      try {
+        final map = jsonDecode(raw) as Map<String, dynamic>;
+        return map['id']?.toString() != message.id;
+      } catch (_) {
+        return true;
+      }
+    }).toList();
+    await prefs.setStringList(_historyKey, filtered);
+    if (uid == null) return;
+    await firestore.collection('users').doc(uid).collection('medical_ai_chats').doc(message.id).delete();
+  }
+
   Future<void> saveMessage(AiChatMessage message) async {
     final uid = auth.currentUser?.uid;
     final prefs = await SharedPreferences.getInstance();
