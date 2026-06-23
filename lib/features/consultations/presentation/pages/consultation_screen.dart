@@ -156,6 +156,12 @@ class _ConsultationScreenState extends State<ConsultationScreen> {
       _logDebug('الطبيب UID: ${widget.doctorUid}');
       _logDebug('المريض UID: ${widget.patientUid}');
 
+      if (widget.doctorUid.trim().isEmpty || widget.patientUid.trim().isEmpty) {
+        _logError('معرّف الطبيب أو المريض فارغ، لن يتم تحميل وثائق المستخدمين.');
+        _showErrorSnackbar('تعذر فتح الاستشارة لأن بيانات المستخدمين غير مكتملة');
+        return;
+      }
+
       final doctorSnap = await _firestore.collection('users').doc(widget.doctorUid).get();
       final patientSnap = await _firestore.collection('users').doc(widget.patientUid).get();
 

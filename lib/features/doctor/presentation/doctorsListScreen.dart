@@ -155,6 +155,12 @@ class _DoctorsListScreenState extends State<DoctorsListScreen>{
   Future<void> _startConsultation(UserModel doctor) async {
     final user = _auth.currentUser;
     if (user == null) return;
+    if (doctor.uid.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر بدء الاستشارة: بيانات الطبيب غير مكتملة')),
+      );
+      return;
+    }
     try {
       final userDataDoc = await _firestore.collection('users').doc(user.uid).get();
       final userData = userDataDoc.data() ?? {};
@@ -181,10 +187,10 @@ class _DoctorsListScreenState extends State<DoctorsListScreen>{
         Navigator.push(context, MaterialPageRoute(builder: (_) =>
             ConsultationScreen(
               consultationId: matchingConsultation.id,
-              doctorUid: data['doctorId'] ?? '',
-              patientUid: data['userId'] ?? '',
-              doctorName: userData['doctorName'] ?? '',
-              patientName: userData['userName'] ?? '',
+              doctorUid: (data['doctorId'] ?? doctor.uid).toString(),
+              patientUid: (data['userId'] ?? user.uid).toString(),
+              doctorName: (data['doctorName'] ?? doctor.fullName).toString(),
+              patientName: (data['userName'] ?? userData['fullName'] ?? user.displayName ?? 'مستخدم').toString(),
               doctorImage: data['doctorImage'] ?? '',
               userImage: data['userImage'] ?? '',
               isDoctor: false,
@@ -210,6 +216,11 @@ class _DoctorsListScreenState extends State<DoctorsListScreen>{
         'isActive': true,
         'seenBy': [user.uid],
         'hasNewMessage': false,
+        'newMessageFor': null,
+        'unreadCount': {
+          user.uid: 0,
+          doctor.uid: 0,
+        },
       });
 
       if (doctor.fcmToken != null) {
@@ -225,10 +236,10 @@ class _DoctorsListScreenState extends State<DoctorsListScreen>{
       Navigator.push(context, MaterialPageRoute(builder: (_) =>
           ConsultationScreen(
             consultationId: consultationRef.id,
-            doctorUid: userData['doctorId'] ?? '',
-            patientUid: userData['userId'] ?? '',
-            doctorName: userData['doctorName'] ?? '',
-            patientName: userData['userName'] ?? '',
+            doctorUid: doctor.uid,
+            patientUid: user.uid,
+            doctorName: doctor.fullName,
+            patientName: (userData['fullName'] ?? user.displayName ?? 'مستخدم').toString(),
             doctorImage: doctor.photoURL ?? '',
             userImage: userData['photoURL'] ?? user.photoURL ?? '',
             isDoctor: false,
