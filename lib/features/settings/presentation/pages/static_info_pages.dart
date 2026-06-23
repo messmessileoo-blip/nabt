@@ -279,7 +279,7 @@ class SupportPage extends StatelessWidget {
         paragraphs: const [],
         actions: [
           FilledButton.icon(onPressed: () => _open(Uri.parse('mailto:support@digl.com?subject=دعم تطبيق نبض')), icon: const Icon(Icons.email), label: const Text('التواصل عبر البريد الإلكتروني')),
-          OutlinedButton.icon(onPressed: () => _open(Uri.parse('https://wa.me/966500000000')), icon: const Icon(Icons.chat), label: const Text('التواصل عبر واتساب')),
+          OutlinedButton.icon(onPressed: () => _open(Uri.parse('https://wa.me/781268449')), icon: const Icon(Icons.chat), label: const Text('التواصل عبر واتساب')),
         ],
       );
 }

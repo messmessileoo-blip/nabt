@@ -31,7 +31,6 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
   final _problem = TextEditingController();
   final _started = TextEditingController();
   final _age = TextEditingController();
-  final _duration = TextEditingController();
   final _message = TextEditingController();
   final _scrollController = ScrollController();
   final _messageFocus = FocusNode();
@@ -53,7 +52,6 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
     _problem.dispose();
     _started.dispose();
     _age.dispose();
-    _duration.dispose();
     _message.dispose();
     _scrollController.dispose();
     _messageFocus.dispose();
@@ -89,7 +87,6 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
     _problem.clear();
     _started.clear();
     _age.clear();
-    _duration.clear();
     _message.clear();
     setState(() => _intake = null);
   }
@@ -192,14 +189,12 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(value: _gender, decoration: const InputDecoration(labelText: 'الجنس', prefixIcon: Icon(Icons.wc_rounded)), items: ['ذكر', 'أنثى'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _gender = v!)),
           const SizedBox(height: 12),
-          TextFormField(controller: _duration, decoration: const InputDecoration(labelText: 'مدة الأعراض', prefixIcon: Icon(Icons.timelapse_rounded)), validator: _required),
-          const SizedBox(height: 12),
           DropdownButtonFormField<String>(value: _severity, decoration: const InputDecoration(labelText: 'شدة الحالة', prefixIcon: Icon(Icons.monitor_heart_outlined)), items: ['خفيفة', 'متوسطة', 'شديدة', 'طارئة'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _severity = v!)),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: provider.isLoading ? null : () async {
               if (!_formKey.currentState!.validate()) return;
-              final intake = MedicalIntake(problem: _problem.text.trim(), symptomStart: _started.text.trim(), age: int.parse(_age.text.trim()), gender: _gender, duration: _duration.text.trim(), severity: _severity);
+              final intake = MedicalIntake(problem: _problem.text.trim(), symptomStart: _started.text.trim(), age: int.parse(_age.text.trim()), gender: _gender, duration: '', severity: _severity);
               await provider.clearMessages();
               await _saveIntake(intake);
               if (!mounted) return;

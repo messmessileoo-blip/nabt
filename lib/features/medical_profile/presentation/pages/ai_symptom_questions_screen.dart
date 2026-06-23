@@ -428,6 +428,25 @@ class _AiSymptomQuestionsScreenState extends State<AiSymptomQuestionsScreen> {
                 );
               }).toList(),
             ),
+            const SizedBox(height: 16),
+            TextField(
+              onChanged: (value) {
+                setState(() {
+                  _symptomStartDate = value.trim();
+                });
+              },
+              decoration: InputDecoration(
+                labelText: 'اكتب مدة الأعراض بالتفصيل',
+                hintText: 'مثال: منذ أسبوعين، أو منذ 3 ساعات، أو تتكرر منذ شهر',
+                helperText: 'يمكنك اختيار مدة من الأعلى أو كتابة مدة مخصصة بدقة.',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                prefixIcon: const Icon(Icons.edit_calendar_rounded),
+              ),
+              minLines: 1,
+              maxLines: 2,
+            ),
           ],
         ),
       ),
