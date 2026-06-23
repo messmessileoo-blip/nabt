@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 
 import '../../../consultations/presentation/pages/consultation_screen.dart';
+import '../../../maps/widgets/doctor_location_map_card.dart';
 import '../../../model.dart';
 
 class DoctorProfileScreen extends StatelessWidget {
@@ -215,14 +216,39 @@ class DoctorProfileScreen extends StatelessWidget {
                     final data =
                     snapshot.data!.data() as Map<String, dynamic>;
 
-                    return _buildGlassInfoCardFromLiveData(
-                      context: context,
-                      rating: (data['rating'] ?? 0).toDouble(),
-                      consultationCount:
-                      (data['consultationCount'] ?? 0).toInt(),
-                      licenseNumber: data['licenseNumber'],
-                      phone: data['phone'],
-                      isAvailable: data['isAvailable'] == true,
+                    final latitude = _toDouble(data['latitude']) ?? user.latitude;
+                    final longitude = _toDouble(data['longitude']) ?? user.longitude;
+                    final address = (data['address'] ?? data['clinicAddress'] ?? user.address)?.toString();
+                    final minSessionPrice = _toDouble(data['minSessionPrice']) ?? user.minSessionPrice;
+                    final maxSessionPrice = _toDouble(data['maxSessionPrice']) ?? user.maxSessionPrice;
+                    final bookingFee = _toDouble(data['bookingFee'] ?? data['consultationFee'] ?? data['sessionPrice']) ?? user.bookingFee;
+
+                    return Column(
+                      children: [
+                        _buildGlassInfoCardFromLiveData(
+                          context: context,
+                          rating: (data['rating'] ?? 0).toDouble(),
+                          consultationCount: (data['consultationCount'] ?? 0).toInt(),
+                          licenseNumber: data['licenseNumber'],
+                          phone: data['phone'],
+                          isAvailable: data['isAvailable'] == true,
+                        ),
+                        const SizedBox(height: 12),
+                        _buildPricingCard(
+                          context,
+                          minSessionPrice: minSessionPrice,
+                          maxSessionPrice: maxSessionPrice,
+                          bookingFee: bookingFee,
+                        ),
+                        if (latitude != null && longitude != null) ...[
+                          const SizedBox(height: 12),
+                          DoctorLocationMapCard(
+                            latitude: latitude,
+                            longitude: longitude,
+                            address: address,
+                          ),
+                        ],
+                      ],
                     );
                   },
                 ),
@@ -243,6 +269,57 @@ class DoctorProfileScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+
+  static double? _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  String _formatPrice(double? value) {
+    if (value == null || value <= 0) return 'غير محدد';
+    final fixed = value.truncateToDouble() == value ? value.toStringAsFixed(0) : value.toStringAsFixed(2);
+    return '$fixed ريال';
+  }
+
+  Widget _buildPricingCard(
+    BuildContext context, {
+    required double? minSessionPrice,
+    required double? maxSessionPrice,
+    required double? bookingFee,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final sessionPrice = minSessionPrice == null && maxSessionPrice == null
+        ? 'غير محدد'
+        : minSessionPrice != null && maxSessionPrice != null && minSessionPrice != maxSessionPrice
+            ? '${_formatPrice(minSessionPrice)} - ${_formatPrice(maxSessionPrice)}'
+            : _formatPrice(minSessionPrice ?? maxSessionPrice);
+
+    return Card(
+      color: colorScheme.surface,
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.payments_rounded, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('أسعار الطبيب', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildInfoRow(context, Icons.medical_services_outlined, 'سعر الاستشارة', sessionPrice),
+            const SizedBox(height: 10),
+            _buildInfoRow(context, Icons.event_available_rounded, 'سعر الحجز', _formatPrice(bookingFee)),
+          ],
+        ),
       ),
     );
   }

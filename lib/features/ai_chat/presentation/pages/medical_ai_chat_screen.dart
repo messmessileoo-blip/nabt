@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/models/ai_chat_message.dart';
@@ -30,7 +31,6 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
   final _problem = TextEditingController();
   final _started = TextEditingController();
   final _age = TextEditingController();
-  final _duration = TextEditingController();
   final _message = TextEditingController();
   final _scrollController = ScrollController();
   final _messageFocus = FocusNode();
@@ -39,6 +39,7 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
   String _severity = 'متوسطة';
   MedicalIntake? _intake;
   bool _isLoadingSavedIntake = true;
+  String? _selectedImagePath;
 
   @override
   void initState() {
@@ -51,7 +52,6 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
     _problem.dispose();
     _started.dispose();
     _age.dispose();
-    _duration.dispose();
     _message.dispose();
     _scrollController.dispose();
     _messageFocus.dispose();
@@ -87,7 +87,6 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
     _problem.clear();
     _started.clear();
     _age.clear();
-    _duration.clear();
     _message.clear();
     setState(() => _intake = null);
   }
@@ -106,10 +105,17 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
   Future<void> _sendMessage(MedicalAiChatProvider provider) async {
     final intake = _intake;
     final text = _message.text.trim();
-    if (intake == null || text.isEmpty || provider.isLoading) return;
+    if (intake == null || provider.isLoading) return;
+    if (text.isEmpty && _selectedImagePath == null) return;
+    final selectedImage = _selectedImagePath;
     _message.clear();
+    setState(() => _selectedImagePath = null);
     _scrollToBottom();
-    await provider.send(intake, text);
+    if (selectedImage != null) {
+      await provider.sendAttachment(intake, selectedImage, 'image', description: text.isEmpty ? 'يرجى تحليل الصورة المرفقة.' : text);
+    } else {
+      await provider.send(intake, text);
+    }
     _scrollToBottom();
     _messageFocus.requestFocus();
   }
@@ -183,14 +189,12 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(value: _gender, decoration: const InputDecoration(labelText: 'الجنس', prefixIcon: Icon(Icons.wc_rounded)), items: ['ذكر', 'أنثى'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _gender = v!)),
           const SizedBox(height: 12),
-          TextFormField(controller: _duration, decoration: const InputDecoration(labelText: 'مدة الأعراض', prefixIcon: Icon(Icons.timelapse_rounded)), validator: _required),
-          const SizedBox(height: 12),
           DropdownButtonFormField<String>(value: _severity, decoration: const InputDecoration(labelText: 'شدة الحالة', prefixIcon: Icon(Icons.monitor_heart_outlined)), items: ['خفيفة', 'متوسطة', 'شديدة', 'طارئة'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(), onChanged: (v) => setState(() => _severity = v!)),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: provider.isLoading ? null : () async {
               if (!_formKey.currentState!.validate()) return;
-              final intake = MedicalIntake(problem: _problem.text.trim(), symptomStart: _started.text.trim(), age: int.parse(_age.text.trim()), gender: _gender, duration: _duration.text.trim(), severity: _severity);
+              final intake = MedicalIntake(problem: _problem.text.trim(), symptomStart: _started.text.trim(), age: int.parse(_age.text.trim()), gender: _gender, duration: '', severity: _severity);
               await provider.clearMessages();
               await _saveIntake(intake);
               if (!mounted) return;
@@ -226,7 +230,11 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
                   itemCount: itemCount,
                   itemBuilder: (context, i) {
                     if (i == provider.messages.length) return const _TypingIndicator();
-                    return _MessageBubble(message: provider.messages[i]);
+                    return _MessageBubble(
+                      message: provider.messages[i],
+                      onDelete: () => _confirmDeleteMessage(context, provider, provider.messages[i]),
+                      onResend: provider.messages[i].isUser ? () => provider.resend(_intake!, provider.messages[i]) : null,
+                    );
                   },
                 ),
         ),
@@ -234,14 +242,16 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
           controller: _message,
           focusNode: _messageFocus,
           isLoading: provider.isLoading,
+          selectedImagePath: _selectedImagePath,
+          onRemoveImage: () => setState(() => _selectedImagePath = null),
           onSend: () => _sendMessage(provider),
           onImage: () async {
             final intake = _intake;
             if (intake == null || provider.isLoading) return;
             final x = await ImagePicker().pickImage(source: ImageSource.gallery);
             if (x != null) {
-              await provider.sendAttachment(intake, x.path, 'image');
-              _scrollToBottom();
+              setState(() => _selectedImagePath = x.path);
+              _messageFocus.requestFocus();
             }
           },
           onFile: () async {
@@ -257,7 +267,12 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
                   lowerPath.endsWith('.webp') ||
                   lowerPath.endsWith('.heic') ||
                   lowerPath.endsWith('.heif');
-              await provider.sendAttachment(intake, path, isImage ? 'image' : 'file');
+              if (isImage) {
+                setState(() => _selectedImagePath = path);
+                _messageFocus.requestFocus();
+              } else {
+                await provider.sendAttachment(intake, path, 'file', description: _message.text);
+              }
               _scrollToBottom();
             }
           },
@@ -266,13 +281,43 @@ class _MedicalAiChatScreenState extends State<MedicalAiChatScreen> {
     );
   }
 
+  Future<void> _confirmDeleteMessage(BuildContext context, MedicalAiChatProvider provider, AiChatMessage message) async {
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(22, 10, 22, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Icon(Icons.delete_outline_rounded, size: 42, color: Theme.of(context).colorScheme.error),
+            const SizedBox(height: 12),
+            Text('حذف الرسالة؟', textAlign: TextAlign.center, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 8),
+            Text('سيتم حذف هذه الرسالة من واجهة المحادثة وسجل المحادثة المحفوظ.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyMedium),
+            const SizedBox(height: 18),
+            FilledButton.icon(onPressed: () => Navigator.pop(context, true), icon: const Icon(Icons.delete_rounded), label: const Text('حذف الرسالة')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true) {
+      await provider.deleteMessage(message);
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
+    }
+  }
+
   String? _required(String? v) => v == null || v.trim().isEmpty ? 'هذا الحقل مطلوب' : null;
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+  const _MessageBubble({required this.message, required this.onDelete, this.onResend});
 
   final AiChatMessage message;
+  final VoidCallback onDelete;
+  final VoidCallback? onResend;
 
   @override
   Widget build(BuildContext context) {
@@ -289,9 +334,11 @@ class _MessageBubble extends StatelessWidget {
         opacity: value,
         child: Transform.translate(offset: Offset(0, (1 - value) * 12), child: child),
       ),
-      child: Align(
-        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
+      child: GestureDetector(
+        onLongPress: onDelete,
+        child: Align(
+          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
           constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .82),
           margin: const EdgeInsets.symmetric(vertical: 6),
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
@@ -317,23 +364,46 @@ class _MessageBubble extends StatelessWidget {
               ],
               SelectableText(message.content, style: TextStyle(color: foreground, height: 1.45, fontSize: 15.5)),
               const SizedBox(height: 6),
-              Align(
-                alignment: AlignmentDirectional.centerEnd,
-                child: IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'نسخ الرسالة',
-                  onPressed: () async {
-                    await Clipboard.setData(ClipboardData(text: message.content));
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ الرسالة')));
-                    }
-                  },
-                  icon: Icon(Icons.copy_rounded, size: 16, color: foreground.withOpacity( .76)),
-                ),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 2,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'نسخ الرسالة',
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: message.content));
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ الرسالة')));
+                      }
+                    },
+                    icon: Icon(Icons.copy_rounded, size: 16, color: foreground.withOpacity(.76)),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'مشاركة الرسالة',
+                    onPressed: () => Share.share(message.content),
+                    icon: Icon(Icons.ios_share_rounded, size: 16, color: foreground.withOpacity(.76)),
+                  ),
+                  if (onResend != null)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'إعادة إرسال السؤال',
+                      onPressed: onResend,
+                      icon: Icon(Icons.refresh_rounded, size: 17, color: foreground.withOpacity(.76)),
+                    ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'حذف الرسالة',
+                    onPressed: onDelete,
+                    icon: Icon(Icons.delete_outline_rounded, size: 16, color: foreground.withOpacity(.76)),
+                  ),
+                ],
               ),
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -426,6 +496,8 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.isLoading,
+    required this.selectedImagePath,
+    required this.onRemoveImage,
     required this.onSend,
     required this.onImage,
     required this.onFile,
@@ -434,6 +506,8 @@ class _Composer extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isLoading;
+  final String? selectedImagePath;
+  final VoidCallback onRemoveImage;
   final VoidCallback onSend;
   final VoidCallback onImage;
   final VoidCallback onFile;
@@ -449,8 +523,23 @@ class _Composer extends StatelessWidget {
           color: colorScheme.surface,
           border: Border(top: BorderSide(color: colorScheme.outlineVariant.withOpacity(.55))),
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
+            if (selectedImagePath != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: colorScheme.primaryContainer.withOpacity(.45), borderRadius: BorderRadius.circular(18)),
+                child: Row(children: [
+                  ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.file(File(selectedImagePath!), width: 58, height: 58, fit: BoxFit.cover)),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('تم اختيار صورة. اكتب وصفاً أو سؤالك عنها ثم أرسلها مع الرسالة.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant))),
+                  IconButton(onPressed: onRemoveImage, icon: const Icon(Icons.close_rounded)),
+                ]),
+              ),
+            Row(
+              children: [
             IconButton(tooltip: 'رفع صورة', onPressed: isLoading ? null : onImage, icon: const Icon(Icons.image_outlined)),
             IconButton(tooltip: 'رفع ملف', onPressed: isLoading ? null : onFile, icon: const Icon(Icons.attach_file_rounded)),
             Expanded(
@@ -475,10 +564,12 @@ class _Composer extends StatelessWidget {
               valueListenable: controller,
               builder: (context, value, _) => IconButton.filled(
                 tooltip: 'إرسال',
-                onPressed: isLoading || value.text.trim().isEmpty ? null : onSend,
+                onPressed: isLoading || (value.text.trim().isEmpty && selectedImagePath == null) ? null : onSend,
                 icon: const Icon(Icons.send_rounded),
               ),
             ),
+          ],
+        ),
           ],
         ),
       ),
